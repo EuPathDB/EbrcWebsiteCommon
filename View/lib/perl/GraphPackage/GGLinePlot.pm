@@ -1412,6 +1412,206 @@ myPlotly <- myPlotly %>% onRender(annotationJS)
  
   return $self;
 }
+#--------------------------------------------------------------------------------
+
+package EbrcWebsiteCommon::View::GraphPackage::GGLinePlot::MicroarrayPercentileSummary;
+use base qw( EbrcWebsiteCommon::View::GraphPackage::GGLinePlot );
+use strict;
+
+sub new {
+  my $class = shift;
+  my $self = $class->SUPER::new(@_);
+  my $id = $self->getId();
+
+  $self->setPartName('microarray.summary');
+  $self->setYaxisLabel('');
+  $self->setPlotTitle("Microarray Percentile Summary - $id");
+  $self->setForceNoLines(1);
+  my $projectId = $self->getProject();
+  my $exprMetric = "Percentile";
+
+  my $adjust = "
+arrayTypes <- lapply(unique(profile.df.full\$DISPLAY_NAME), FUN = function(name) {ifelse(data.table::uniqueN(profile.df.full\$PROFILE_TYPE[profile.df.full\$DISPLAY_NAME == name]) > 1, 'Two Channel Array', 'One Channel Array')})
+names(arrayTypes) <- unique(profile.df.full\$DISPLAY_NAME)
+getArrayType <- function(name) {arrayTypes[[name]]}
+profile.df.full\$LEGEND <- unlist(lapply(profile.df.full\$DISPLAY_NAME, getArrayType))
+suffix <- ifelse(profile.df.full\$LEGEND == 'Two Channel Array', ifelse(profile.df.full\$PROFILE_TYPE == 'channel2_percentiles', '- channel 2', '- channel 1'), '')
+profile.df.full\$LEGEND <- as.factor(paste0(profile.df.full\$LEGEND, suffix))
+
+profile.df.full\$TOOLTIP <- paste(profile.df.full\$ELEMENT_NAMES, profile.df.full\$VALUE)
+profile.df.full\$DISPLAY_NAME <- factor(profile.df.full\$DISPLAY_NAME, levels = rev(levels(as.factor(profile.df.full\$DISPLAY_NAME))))
+the.colors <- rep('black', data.table::uniqueN(profile.df.full\$LEGEND))
+
+truncatedSamplesTable <- function(x,y) {
+  numSamples <- length(x)
+  if (numSamples > 10) { x <- x[1:10]; y <- y[1:10] }
+  tableText <- paste(paste0(x, \":  \", y), collapse=\"<br>\")
+  if (numSamples > 10) { tableText <- paste0(tableText, \"<br>...<br><i>(Click on points in graph to see all samples.<br> Zoom may also be necessary.)</i>\")}
+
+  return(tableText)
+}
+
+table.df <- profile.df.full %>% 
+                   group_by(DISPLAY_NAME) %>% 
+                   summarize(TABLE=truncatedSamplesTable(ELEMENT_NAMES, VALUE))
+table.df\$TABLE <- paste0(\"<b>Sample:  $exprMetric</b><br>\", table.df\$TABLE)
+profile.df.full <- merge(profile.df.full, table.df, by = 'DISPLAY_NAME')
+";
+
+  $self->addAdjustProfile($adjust);
+
+  my $plotlyConfig = "
+x.max <- 100
+
+myYShift <- 15
+if (uniqueN(profile.df.full\$DISPLAY_NAME) < 6) {
+  myYShift <- 25
+}
+
+#reimplement w different colors once i have something working
+myColors <- ifelse(profile.df.full\$LEGEND == 'One Channel Array', \"#009988\", ifelse(profile.df.full\$LEGEND == 'Two Channel Array- channel 1', \"#33BBEE\", \"#0077BB\"))
+myOpaqueColors <- ifelse(profile.df.full\$LEGEND == 'One Channel Array', \"#44AA99\", ifelse(profile.df.full\$LEGEND == 'Two Channel Array- channel 1', \"#88CCEE\", \"#4A96C2\"))
+myTextColors <- rep(\"black\", uniqueN(profile.df.full\$LEGEND))
+colors.df <- data.table(\"LEGEND\" = unique(profile.df.full\$LEGEND), \"COLOR\" = paste0(myOpaqueColors, \"|\", myTextColors))
+profile.df.full <- merge(profile.df.full, colors.df, by = \"LEGEND\")
+profile.df.full\$COLOR <- paste0(profile.df.full\$COLOR, \"|\", profile.df.full\$DATASET_PRESENTER_ID)
+
+#some bs about dual axes
+profile.df.full.1 <- profile.df.full[profile.df.full\$DISPLAY_NAME == profile.df.full\$DISPLAY_NAME[length(profile.df.full\$DISPLAY_NAME)],]
+if (uniqueN(profile.df.full\$DISPLAY_NAME) == 1) {
+  profile.df.full.2 <- profile.df.full.1
+} else {
+  profile.df.full.2 <- profile.df.full[profile.df.full\$DISPLAY_NAME != profile.df.full\$DISPLAY_NAME[length(profile.df.full\$DISPLAY_NAME)],]
+}
+
+myPlotly <- plot_ly(type = \"box\", data = profile.df.full.2, x = ~VALUE, y = ~DISPLAY_NAME, color = ~LEGEND, colors = myColors, text = ~TOOLTIP, customdata = ~COLOR, hoverinfo = \"none\", boxpoints = \"all\", jitter = 0.3, pointpos = 0, showlegend = TRUE, opacity = .6, marker=list(color=\"black\")) %>% 
+  add_trace(type = \"box\", data = profile.df.full.1, x = ~VALUE, y = ~DISPLAY_NAME, color = ~LEGEND, colors = myColors, text = ~TOOLTIP, customdata = ~COLOR, hoverinfo = \"none\", boxpoints = \"all\", jitter = 0.3, pointpos = 0, showlegend = FALSE, opacity = .6, marker=list(color=\"black\"), xaxis = \"x2\") %>%
+  layout(xaxis = list(title = \"Percentile\", 
+		      range = c(0, x.max),
+		      dtick = 10,
+		      zerolinecolor = \"#eee\"),
+	 xaxis2 = list(range = c(0, x.max),
+		       dtick = 10,
+		       zerolinecolor = \"#eee\",
+		       overlaying = \"x\",
+		       side = \"top\"),
+         yaxis = list(visible = FALSE),
+         margin = list(l = 75, 
+                       r = 30, 
+                       b = 75, 
+                       t = 60, 
+                       pad = 1),
+	 boxgap = .6,
+         boxmode = 'group'
+  ) %>%
+  add_annotations(yref=\"paper\", 
+                 xref=\"paper\", 
+                 y=1.075, 
+                 x=-0.05, 
+                 text=\"<b><i>Gene:</i></b>\", 
+                 showarrow=F, 
+                 font=list(size=14,
+                           color=\"black\")) %>%
+  add_annotations(yref=\"paper\", 
+                 xref=\"paper\", 
+                 y=1.075, 
+                 x=0, 
+                 text=\"<i>$id</i>\", 
+                 showarrow=F, 
+                 font=list(size=14,
+                           color=\"darkred\")) %>%
+  highlight(on = \"plotly_selected\") %>%
+  add_annotations(x = -.05,
+                 y = unique(profile.df.full\$DISPLAY_NAME),
+		 text = unique(profile.df.full\$DISPLAY_NAME),
+		 hovertext = unique(profile.df.full\$TABLE),
+                 xref = \"paper\",
+                 yref = \"y\",
+                 xanchor = \"left\",
+                 showarrow = FALSE,
+		 font=list(size=10),
+                 yshift = myYShift,
+                 valign = \"top\",
+		 name = unique(profile.df.full\$DATASET_PRESENTER_ID)) %>%
+  config(displaylogo = FALSE, 
+         collaborate = FALSE)
+
+annotationJS <- \"function(el) {
+      var updatemenus =[{
+        buttons: [
+	    {
+                args: [{annotations: el.layout.annotations}],
+		label: '<i>click to remove sample labels</i>',
+                method: 'relayout'
+            }
+        ],
+        showactive: false,
+        active: 0,
+        type: 'buttons',
+        y: -0.1,
+	x: 0.85,
+	xanchor: 'center',
+        yanchor: 'bottom',
+	bgcolor: 'lightgray',
+	borderwidth: 0
+    }];
+
+    Plotly.relayout(el.id, {updatemenus: updatemenus});
+
+      el.on('plotly_click', function(d) {
+  	var ptsData = d.points[0].data;
+	
+	var i;
+	var annArray = [];
+	var foundDup = false;
+	for (i = 0; i < ptsData.x.length; i++) {
+	  if (!(Array.isArray(ptsData.text))) {
+	    ptsData.text = [ptsData.text];
+	  }
+	    var ann = {
+              bgcolor: ptsData.customdata[i].split('|')[0],
+              bordercolor: 'black',
+              arrowsize: .5,
+              ay: 30,
+              ax: ptsData.x[i],
+              axref: 'x',
+              clicktoshow: 'onoff',
+              font: {size: 12,
+                     color: ptsData.customdata[i].split('|')[1]},
+              textangle: 60,
+              text: ptsData.text[i],
+              x: ptsData.x[i],
+              y: ptsData.y[i],
+              xref: 'x',
+              yref: 'y',
+              xanchor: 'left',
+              showarrow: true
+	    };
+          
+          // delete instead if already exists
+	  el.layout.annotations.forEach(
+	    function(oldAnn, index) {
+              if (ann.x === oldAnn.x && ann.y === oldAnn.y) {
+                Plotly.relayout(el.id, 'annotations[' + index + ']', 'remove');
+                foundDup = true;
+	      }
+            });
+	  annArray.push(ann);
+        }
+	if (foundDup) return;
+
+	Plotly.relayout(el.id, {annotations: el.layout.annotations.concat(annArray)});
+      })
+
+}\"
+
+myPlotly <- myPlotly %>% onRender(annotationJS)
+
+";
+  $self->setPlotlyCustomConfig($plotlyConfig);
+ 
+  return $self;
+}
 
 #--------------------------------------------------------------------------------
 
